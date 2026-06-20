@@ -1,0 +1,46 @@
+# Binaries
+grok-oauth-api
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Git
+.git
+.gitignore
+
+# Environment & secrets
+.env
+.env.*
+auth.json
+*.log
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker (not needed in build context)
+Dockerfile
+docker-compose*
+.dockerignore
+
+# Documentation (speeds up context)
+README.md
+LICENSE
+*.md
+
+# Test files (not needed for final image)
+**/*_test.go
+
+# Misc build artifacts
+dist/
+tmp/

@@ -1,0 +1,26 @@
+services:
+  grok-oauth-api:
+    build: .
+    container_name: grok-oauth-api
+    ports:
+      - "8080:8080"
+    environment:
+      # Required: change this to a strong secret for production
+      - PROXY_API_KEY=change-me-in-production
+      # Optional overrides
+      # - PORT=8080
+      # - TOKEN_PATH=/data/auth.json
+      # - MODEL_MAP=composer-bugra:composer-2.5,my-alias:grok-3-latest
+    volumes:
+      # Persist OAuth tokens across restarts
+      - grok-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  grok-data:
