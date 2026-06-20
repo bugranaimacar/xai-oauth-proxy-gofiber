@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"sync"
+	"time"
 
 	"github.com/gofiber/fiber/v3"
 	"grok-oauth-api/internal/config"
@@ -13,11 +15,13 @@ import (
 )
 
 type Server struct {
-	app           *fiber.App
-	cfg           *config.Config
-	oauthClient   *oauth.Client
-	tokenStore    *store.Store
+	app            *fiber.App
+	cfg            *config.Config
+	oauthClient    *oauth.Client
+	tokenStore     *store.Store
 	callbackServer *oauth.CallbackServer
+	oauthSessions  sync.Map // session_id -> *oauthSession
+	userCodeIndex  sync.Map // normalized user_code -> session_id
 }
 
 func New(cfg *config.Config) *Server {
@@ -44,10 +48,16 @@ func New(cfg *config.Config) *Server {
 	}
 
 	app.Get("/health", s.health)
-	app.Get("/oauth/start", s.oauthStart)
-	app.Get("/oauth/callback", s.oauthCallback)
-	app.Post("/oauth/device", s.oauthDeviceStart)
-	app.Post("/oauth/device/poll", s.oauthDevicePoll)
+
+	oauthGroup := app.Group("/oauth", requireProxyAPIKey(cfg))
+	oauthGroup.Get("/start", s.oauthStart)
+	oauthGroup.Get("/callback", s.oauthCallback)
+	oauthGroup.Post("/device", s.oauthDeviceStart)
+	oauthGroup.Post("/device/poll", s.oauthDevicePoll)
+	oauthGroup.Post("/remote", s.oauthRemoteStart)
+	oauthGroup.Post("/remote/complete", s.oauthRemoteComplete)
+	oauthGroup.Post("/complete", s.oauthComplete)
+
 	app.All("/v1/*", proxy.New(cfg, tokenStore))
 
 	return s
@@ -89,6 +99,19 @@ func (s *Server) oauthStart(c fiber.Ctx) error {
 
 	authURL := s.oauthClient.BuildAuthorizeURL(pkce, state, nonce)
 
+	sessionID, err := newSessionID()
+	if err != nil {
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+	browserSess := &oauthSession{
+		SessionID: sessionID,
+		PKCE:      pkce,
+		State:     state,
+		ExpiresAt: time.Now().Add(oauthSessionTTL),
+		CreatedAt: time.Now(),
+	}
+	s.putOAuthSession(browserSess)
+
 	if auto {
 		if err := oauth.OpenBrowser(authURL); err != nil {
 			return c.Status(http.StatusInternalServerError).JSON(fiber.Map{
@@ -104,6 +127,7 @@ func (s *Server) oauthStart(c fiber.Ctx) error {
 		if err := s.tokenStore.SetTokens(tokens); err != nil {
 			return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 		}
+		s.deleteOAuthSession(browserSess)
 		c.Set("Content-Type", "text/html")
 		return c.Status(http.StatusOK).SendString(OAuthSuccessHTML)
 	}
@@ -113,13 +137,17 @@ func (s *Server) oauthStart(c fiber.Ctx) error {
 		if cbErr != nil {
 			return
 		}
-		_ = s.tokenStore.SetTokens(tokens)
+		if err := s.tokenStore.SetTokens(tokens); err == nil {
+			s.deleteOAuthSession(browserSess)
+		}
 	}()
 
 	return c.JSON(fiber.Map{
 		"auth_url":     authURL,
 		"redirect_uri": redirectURI,
 		"state":        state,
+		"session_id":   sessionID,
+		"remote_hint":  "If redirect cannot reach this server, open auth_url, then POST /oauth/complete with session_id and callback_url (full redirect URL) or code+state",
 	})
 }
 

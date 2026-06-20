@@ -171,20 +171,61 @@ console.log(response.choices[0].message.content);
 3. Waits for you to log in.
 4. Exchanges the code, saves tokens to `auth.json`, and shows a success page.
 
+All `/oauth/*` HTTP routes require the same key as the API:
+
+```bash
+-H "Authorization: Bearer $PROXY_API_KEY"
+```
+
 ### Device-code flow (recommended for headless / VPS / Docker)
 
 For machines where `127.0.0.1:56121` is not reachable from your browser.
 
 ```bash
 # 1. Request a device code
-curl -X POST http://localhost:8080/oauth/device
+curl -X POST http://localhost:8080/oauth/device \
+  -H "Authorization: Bearer your-proxy-key"
 
 # 2. Open the returned verification_uri on any device and enter user_code
 
 # 3. Poll until complete
 curl -X POST http://localhost:8080/oauth/device/poll \
+  -H "Authorization: Bearer your-proxy-key" \
   -H "Content-Type: application/json" \
   -d '{"device_code":"..."}'
+```
+
+### Remote OAuth (`/oauth/remote`) — paste the Grok Build code
+
+When the proxy runs on a remote host (Coolify, VPS, ngrok), use the device flow and
+paste the code shown as **“Enter this code to finish signing in”**:
+
+```bash
+# 1. Start remote session
+curl -X POST https://your-host/oauth/remote \
+  -H "Authorization: Bearer your-proxy-key"
+
+# 2. Open verification_uri in your browser and sign in; copy the user code
+
+# 3. Complete (polls xAI until authorized)
+curl -X POST https://your-host/oauth/remote/complete \
+  -H "Authorization: Bearer your-proxy-key" \
+  -H "Content-Type: application/json" \
+  -d '{"session_id":"...","user_code":"ABCD-1234"}'
+```
+
+You can also send only `user_code` if the session is still active.
+
+### Manual browser callback (redirect URL paste)
+
+If you used `GET /oauth/start` and the redirect cannot hit your machine, open
+`auth_url`, then paste the full callback URL (or `code` + `state`):
+
+```bash
+curl -X POST https://your-host/oauth/complete \
+  -H "Authorization: Bearer your-proxy-key" \
+  -H "Content-Type: application/json" \
+  -d '{"session_id":"...","callback_url":"http://127.0.0.1:56121/callback?code=...&state=..."}'
 ```
 
 ## How it works
