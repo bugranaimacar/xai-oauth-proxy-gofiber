@@ -261,6 +261,30 @@ flowchart LR
 │   └── server/routes.go            # HTTP routes
 ```
 
+## Docker
+
+```bash
+docker compose up -d --build
+```
+
+OAuth tokens are stored at **`/data/auth.json`** inside the container. Compose mounts the
+named volume **`grok-oauth-data`** on `/data`, so tokens survive container restarts,
+image rebuilds, and server reboots.
+
+```bash
+# Plain docker run (same persistence — use a named volume)
+docker volume create grok-oauth-data
+docker run -d --name grok-oauth-api \
+  -p 8080:8080 \
+  -e PROXY_API_KEY=your-proxy-key \
+  -e TOKEN_PATH=/data/auth.json \
+  -v grok-oauth-data:/data \
+  --restart unless-stopped \
+  grok-oauth-api
+```
+
+To wipe saved tokens: `docker compose down -v` or `docker volume rm grok-oauth-data`.
+
 ## Running tests
 
 ```bash

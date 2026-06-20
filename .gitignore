@@ -37,6 +37,8 @@ Thumbs.db
 
 # Application-specific
 auth.json
+docker/data/*
+!docker/data/.gitkeep
 dist/
 tmp/
 *.log

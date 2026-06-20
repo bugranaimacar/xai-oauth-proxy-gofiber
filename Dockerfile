@@ -30,8 +30,10 @@ RUN apk add --no-cache ca-certificates tzdata && \
     addgroup -g 1000 -S appgroup && \
     adduser -u 1000 -S appuser -G appgroup
 
-# Create data directory for tokens (auth.json)
+# OAuth tokens: always written to TOKEN_PATH (default /data/auth.json).
+# Mount a volume on /data so auth.json survives container restart/redeploy.
 RUN mkdir -p /data && chown -R appuser:appgroup /data /app
+VOLUME ["/data"]
 
 # Copy binary
 COPY --from=builder /out/grok-oauth-api /app/grok-oauth-api
