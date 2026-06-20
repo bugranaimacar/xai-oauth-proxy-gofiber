@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -33,6 +34,7 @@ type Config struct {
 	XAIScope      string
 	TokenPath     string
 	UserAgent     string
+	ModelMap      map[string]string
 }
 
 func Load() (*Config, error) {
@@ -53,6 +55,7 @@ func Load() (*Config, error) {
 		XAIScope:       getEnv("XAI_SCOPE", DefaultScope),
 		TokenPath:      getEnv("TOKEN_PATH", DefaultTokenPath),
 		UserAgent:      getEnv("USER_AGENT", DefaultUserAgent),
+		ModelMap:       loadModelMap(getEnv("MODEL_MAP", "")),
 	}
 
 	if _, err := strconv.Atoi(cfg.Port); err != nil {
@@ -67,4 +70,32 @@ func getEnv(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// loadModelMap parses MODEL_MAP entries like "alias:target,other:model".
+// When MODEL_MAP is empty, returns the built-in default alias map.
+func loadModelMap(raw string) map[string]string {
+	if raw == "" {
+		return map[string]string{
+			"composer-bugra": "composer-2.5",
+		}
+	}
+
+	out := make(map[string]string)
+	for _, pair := range strings.Split(raw, ",") {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+		parts := strings.SplitN(pair, ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		from := strings.TrimSpace(parts[0])
+		to := strings.TrimSpace(parts[1])
+		if from != "" && to != "" {
+			out[from] = to
+		}
+	}
+	return out
 }

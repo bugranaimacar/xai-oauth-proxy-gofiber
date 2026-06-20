@@ -92,6 +92,53 @@ func TestProxyForwardsRequest(t *testing.T) {
 	}
 }
 
+func TestProxyStreamsResponse(t *testing.T) {
+	accessToken := makeJWT(time.Now().Add(time.Hour))
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("data: {\"chunk\":1}\n\ndata: [DONE]\n\n"))
+	}))
+	defer upstream.Close()
+
+	cfg := &config.Config{
+		ProxyAPIKey: "proxy-key",
+		XAIAPIBase:  upstream.URL,
+		UserAgent:   "test",
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "auth.json")
+	oauthClient := oauth.NewClient("client", "", "", "", "", "", "")
+	s := store.New(path, oauthClient)
+	_ = s.Save(store.TokenData{
+		AccessToken: accessToken,
+		ExpiresAt:   time.Now().Add(time.Hour),
+	})
+
+	app := fiber.New()
+	app.All("/v1/*", New(cfg, s))
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"grok","stream":true}`))
+	req.Header.Set("Authorization", "Bearer proxy-key")
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatalf("Test request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), `data: {"chunk":1}`) {
+		t.Errorf("unexpected stream body: %s", body)
+	}
+}
+
 func TestProxyRejectsInvalidKey(t *testing.T) {
 	cfg := &config.Config{
 		Port:        "8080",

@@ -101,6 +101,26 @@ Set via environment variables:
 | `XAI_API_BASE` | `https://api.x.ai` | Upstream API base URL |
 | `TOKEN_PATH` | `./auth.json` | Where tokens are persisted |
 | `USER_AGENT` | `grok-oauth-proxy/0.1.0` | User-Agent for upstream requests |
+| `MODEL_MAP` | `composer-bugra:composer-2.5` | Comma-separated model aliases (`alias:target`) |
+
+## Model aliases
+
+By default, requests that use the model name `composer-bugra` are rewritten to
+`composer-2.5` before being forwarded to xAI.
+
+```bash
+# Use your custom alias in the client
+curl http://localhost:8080/v1/chat/completions \
+  -H "Authorization: Bearer your-proxy-key" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"composer-bugra","messages":[{"role":"user","content":"Hello"}]}'
+```
+
+Override or extend aliases with `MODEL_MAP`:
+
+```bash
+MODEL_MAP="composer-bugra:composer-2.5,my-alias:grok-3-latest" ./grok-oauth-api start
+```
 
 ## Usage with the OpenAI SDK
 

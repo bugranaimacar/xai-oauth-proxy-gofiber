@@ -1,6 +1,9 @@
 package proxy
 
 import (
+	"bufio"
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,6 +15,17 @@ import (
 	"grok-oauth-api/internal/store"
 )
 
+var hopByHopHeaders = map[string]struct{}{
+	"connection":          {},
+	"keep-alive":          {},
+	"proxy-authenticate":  {},
+	"proxy-authorization": {},
+	"te":                  {},
+	"trailer":             {},
+	"transfer-encoding":   {},
+	"upgrade":             {},
+}
+
 func New(cfg *config.Config, tokenStore *store.Store) fiber.Handler {
 	upstream, err := url.Parse(cfg.XAIAPIBase)
 	if err != nil {
@@ -19,6 +33,9 @@ func New(cfg *config.Config, tokenStore *store.Store) fiber.Handler {
 	}
 
 	client := &http.Client{
+		Transport: &http.Transport{
+			DisableCompression: true,
+		},
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
@@ -48,17 +65,29 @@ func New(cfg *config.Config, tokenStore *store.Store) fiber.Handler {
 		}
 
 		body := c.Request().Body()
-		req, err := http.NewRequestWithContext(c.Context(), c.Method(), targetURL.String(), io.NopCloser(strings.NewReader(string(body))))
+		bodyRewritten := false
+		if shouldRewriteModel(c.Path(), c.Get("Content-Type")) {
+			if rewritten, ok := rewriteModel(body, cfg.ModelMap); ok {
+				body = rewritten
+				bodyRewritten = true
+			}
+		}
+
+		req, err := http.NewRequestWithContext(c.Context(), c.Method(), targetURL.String(), io.NopCloser(bytes.NewReader(body)))
 		if err != nil {
 			return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 		}
+		if bodyRewritten || len(body) > 0 {
+			req.ContentLength = int64(len(body))
+		}
 
 		c.Request().Header.VisitAll(func(key, value []byte) {
-			k := string(key)
-			if strings.EqualFold(k, "host") || strings.EqualFold(k, "authorization") {
+			k := strings.ToLower(string(key))
+			switch k {
+			case "host", "authorization", "content-length":
 				return
 			}
-			req.Header.Add(k, string(value))
+			req.Header.Add(string(key), string(value))
 		})
 
 		req.Header.Set("Authorization", "Bearer "+accessToken)
@@ -70,16 +99,100 @@ func New(cfg *config.Config, tokenStore *store.Store) fiber.Handler {
 		if err != nil {
 			return c.Status(http.StatusBadGateway).JSON(fiber.Map{"error": err.Error()})
 		}
-		defer resp.Body.Close()
 
-		c.Status(resp.StatusCode)
-		for k, vv := range resp.Header {
-			for _, v := range vv {
-				c.Set(k, v)
-			}
+		if isModelsPath(c.Path()) && resp.StatusCode == http.StatusOK {
+			defer resp.Body.Close()
+			return writeModelsResponse(c, resp, cfg.ModelMap)
 		}
 
-		_, err = io.Copy(c.Response().BodyWriter(), resp.Body)
-		return err
+		contentType := resp.Header.Get("Content-Type")
+		if strings.Contains(contentType, "text/event-stream") {
+			copyResponseHeaders(c, resp.Header)
+			c.Status(resp.StatusCode)
+			// SendStream closes the upstream body before fasthttp reads it.
+			// Copy inside SendStreamWriter so the body stays open until done.
+			return c.SendStreamWriter(func(w *bufio.Writer) {
+				defer resp.Body.Close()
+				_, _ = io.Copy(w, resp.Body)
+			})
+		}
+
+		defer resp.Body.Close()
+		respBody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return c.Status(http.StatusBadGateway).JSON(fiber.Map{"error": err.Error()})
+		}
+
+		copyResponseHeaders(c, resp.Header)
+		c.Status(resp.StatusCode)
+		return c.Send(respBody)
 	}
+}
+
+func copyResponseHeaders(c fiber.Ctx, headers http.Header) {
+	for k, vv := range headers {
+		if _, skip := hopByHopHeaders[strings.ToLower(k)]; skip {
+			continue
+		}
+		for _, v := range vv {
+			c.Set(k, v)
+		}
+	}
+}
+
+func isModelsPath(path string) bool {
+	return strings.HasSuffix(path, "/models")
+}
+
+func writeModelsResponse(c fiber.Ctx, resp *http.Response, modelMap map[string]string) error {
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return c.Status(http.StatusBadGateway).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	rewritten, err := injectModelAliases(body, modelMap)
+	if err != nil {
+		copyResponseHeaders(c, resp.Header)
+		c.Status(resp.StatusCode)
+		return c.Send(body)
+	}
+
+	copyResponseHeaders(c, resp.Header)
+	c.Status(resp.StatusCode)
+	c.Set("Content-Type", "application/json")
+	return c.Send(rewritten)
+}
+
+func injectModelAliases(body []byte, modelMap map[string]string) ([]byte, error) {
+	if len(modelMap) == 0 {
+		return body, nil
+	}
+
+	var payload struct {
+		Object string           `json:"object"`
+		Data   []map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return body, err
+	}
+
+	existing := make(map[string]struct{}, len(payload.Data))
+	for _, item := range payload.Data {
+		if id, ok := item["id"].(string); ok {
+			existing[id] = struct{}{}
+		}
+	}
+
+	for alias := range modelMap {
+		if _, ok := existing[alias]; ok {
+			continue
+		}
+		payload.Data = append(payload.Data, map[string]any{
+			"id":       alias,
+			"object":   "model",
+			"owned_by": "grok-oauth-proxy",
+		})
+	}
+
+	return json.Marshal(payload)
 }
