@@ -208,4 +208,4 @@ go test ./...
 
 ## License
 
-MIT
+[MIT](LICENSE) © 2026 Buğra Naim Acar
