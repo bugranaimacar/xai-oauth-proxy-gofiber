@@ -10,6 +10,10 @@
 
 Use xAI Grok with any OpenAI-compatible client, without managing API keys manually.
 
+> **Note:** This project is designed for **SuperGrok subscribers**. It uses xAI's
+> Grok-CLI OAuth client to authenticate via your SuperGrok membership, so you can
+> use Grok through the OpenAI-compatible API without a separate paid API key.
+
 </div>
 
 ## What is this?
@@ -18,6 +22,11 @@ Use xAI Grok with any OpenAI-compatible client, without managing API keys manual
 applications and xAI's Grok API. It handles xAI's OAuth login flow for you, keeps
 the access token fresh, and forwards your requests to `https://api.x.ai/v1` with
 the correct bearer token.
+
+If you have a **SuperGrok subscription**, you can use this proxy to access Grok
+through the OpenAI-compatible API without purchasing or managing a separate API
+key. The proxy authenticates as the Grok-CLI OAuth client and reuses the same
+tokens your SuperGrok account is entitled to.
 
 No more copying tokens around. Log in once with the CLI, then point your client
 at `http://localhost:8080/v1`.
